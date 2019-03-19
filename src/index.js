@@ -1,5 +1,6 @@
 /* eslint-disable jsx-a11y/anchor-has-content */
 import React from "react";
+import urlPgk from "url";
 import warning from "warning";
 import PropTypes from "prop-types";
 import invariant from "invariant";
@@ -128,22 +129,26 @@ class LocationProvider extends React.Component {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-let ServerLocation = ({ url, children }) => (
-  <LocationContext.Provider
-    value={{
-      location: {
-        pathname: url,
-        search: "",
-        hash: ""
-      },
-      navigate: () => {
-        throw new Error("You can't call navigate on the server.");
-      }
-    }}
-  >
-    {children}
-  </LocationContext.Provider>
-);
+let ServerLocation = ({ url, children }) => {
+  const parsedUri = urlPgk.parse(url);
+  return (
+    <LocationContext.Provider
+      value={{
+        location: {
+          pathname: parsedUri.pathname,
+          search: parsedUri.search || "",
+          hash: parsedUri.hash || "",
+          query: parsedUri.query
+        },
+        navigate: () => {
+          throw new Error("You can't call navigate on the server.");
+        }
+      }}
+    >
+      {children}
+    </LocationContext.Provider>
+  );
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Sets baseuri and basepath for nested routers and links
