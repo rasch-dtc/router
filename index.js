@@ -169,10 +169,10 @@ process.env.NODE_ENV !== "production" ? LocationProvider.propTypes = {
   history: _propTypes2.default.object.isRequired
 } : void 0;
 var ServerLocation = function ServerLocation(_ref2) {
-  var url = _ref2.url,
+  var req = _ref2.req,
       children = _ref2.children;
 
-  var parsedUri = _url2.default.parse(url);
+  var parsedUri = _url2.default.parse(req.url);
   return _react2.default.createElement(
     LocationContext.Provider,
     {
@@ -181,7 +181,7 @@ var ServerLocation = function ServerLocation(_ref2) {
           pathname: parsedUri.pathname,
           search: parsedUri.search || "",
           hash: parsedUri.hash || "",
-          query: parsedUri.query
+          query: req.query
         },
         navigate: function navigate() {
           throw new Error("You can't call navigate on the server.");
