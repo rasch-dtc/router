@@ -129,8 +129,8 @@ class LocationProvider extends React.Component {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-let ServerLocation = ({ url, children }) => {
-  const parsedUri = urlPgk.parse(url);
+let ServerLocation = ({ req, children }) => {
+  const parsedUri = urlPgk.parse(req.url);
   return (
     <LocationContext.Provider
       value={{
@@ -138,7 +138,7 @@ let ServerLocation = ({ url, children }) => {
           pathname: parsedUri.pathname,
           search: parsedUri.search || "",
           hash: parsedUri.hash || "",
-          query: parsedUri.query
+          query: req.query
         },
         navigate: () => {
           throw new Error("You can't call navigate on the server.");
