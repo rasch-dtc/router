@@ -1441,7 +1441,7 @@ var match = function match(path, uri) {
 // require less contextual information and (fingers crossed) be more intuitive.
 var resolve = function resolve(to, base) {
   // /foo/bar, /baz/qux => /foo/bar
-  if (startsWith(to, "/")) {
+  if (startsWith(to, "/") || startsWith(to, "#")) {
     return to;
   }
 
