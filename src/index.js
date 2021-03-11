@@ -1,27 +1,25 @@
 /* eslint-disable jsx-a11y/anchor-has-content */
-import React from "react";
-import urlPgk from "url";
-import warning from "warning";
 import React, { useContext } from "react";
-import PropTypes from "prop-types";
-import invariant from "invariant";
-import createContext from "create-react-context";
-import { polyfill } from "react-lifecycles-compat";
 import {
-  startsWith,
+  createHistory,
+  createMemorySource,
+  globalHistory,
+  navigate
+} from "./lib/history";
+import {
+  insertParams,
+  match,
   pick,
   resolve,
-  match,
-  insertParams,
-  validateRedirect,
-  shallowCompare
+  shallowCompare,
+  startsWith,
+  validateRedirect
 } from "./lib/utils";
-import {
-  globalHistory,
-  navigate,
-  createHistory,
-  createMemorySource
-} from "./lib/history";
+
+import PropTypes from "prop-types";
+import createContext from "create-react-context";
+import invariant from "invariant";
+import { polyfill } from "react-lifecycles-compat";
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -131,7 +129,7 @@ class LocationProvider extends React.Component {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-let ServerLocation = ({ url, children }) => {
+let ServerLocation = ({ url, query, children }) => {
   let searchIndex = url.indexOf("?");
   let searchExists = searchIndex > -1;
   let pathname;
@@ -151,7 +149,8 @@ let ServerLocation = ({ url, children }) => {
         location: {
           pathname,
           search,
-          hash
+          hash,
+          query
         },
         navigate: () => {
           throw new Error("You can't call navigate on the server.");
