@@ -8,23 +8,23 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
+import React, { useContext } from "react";
+import { createHistory, createMemorySource, globalHistory, navigate } from "./lib/history";
+import { insertParams, match, pick, resolve, shallowCompare, startsWith, validateRedirect } from "./lib/utils";
+
+import PropTypes from "prop-types";
+import createContext from "create-react-context";
+import invariant from "invariant";
+import { polyfill } from "react-lifecycles-compat";
 /* eslint-disable jsx-a11y/anchor-has-content */
-import React from "react";
 import urlPgk from "url";
 import warning from "warning";
-import PropTypes from "prop-types";
-import invariant from "invariant";
-import createContext from "create-react-context";
-import { polyfill } from "react-lifecycles-compat";
-import { startsWith, pick, resolve, match, insertParams, validateRedirect } from "./lib/utils";
-import { globalHistory, navigate, createHistory, createMemorySource } from "./lib/history";
 
 ////////////////////////////////////////////////////////////////////////////////
 
 var createNamedContext = function createNamedContext(name, defaultValue) {
   var Ctx = createContext(defaultValue);
-  Ctx.Consumer.displayName = name + ".Consumer";
-  Ctx.Provider.displayName = name + ".Provider";
+  Ctx.displayName = name;
   return Ctx;
 };
 
@@ -97,6 +97,7 @@ var LocationProvider = function (_React$Component) {
     var refs = this.state.refs,
         history = this.props.history;
 
+    history._onTransitionComplete();
     refs.unlisten = history.listen(function () {
       Promise.resolve().then(function () {
         // TODO: replace rAF with react deferred update API when it's ready https://github.com/facebook/react/issues/13306
@@ -142,19 +143,32 @@ process.env.NODE_ENV !== "production" ? LocationProvider.propTypes = {
   history: PropTypes.object.isRequired
 } : void 0;
 var ServerLocation = function ServerLocation(_ref2) {
-  var req = _ref2.req,
+  var url = _ref2.url,
+      query = _ref2.query,
       children = _ref2.children;
 
-  var parsedUri = urlPgk.parse(req.url);
+  var searchIndex = url.indexOf("?");
+  var searchExists = searchIndex > -1;
+  var pathname = void 0;
+  var search = "";
+  var hash = "";
+
+  if (searchExists) {
+    pathname = url.substring(0, searchIndex);
+    search = url.substring(searchIndex);
+  } else {
+    pathname = url;
+  }
+
   return React.createElement(
     LocationContext.Provider,
     {
       value: {
         location: {
-          pathname: parsedUri.pathname,
-          search: parsedUri.search || "",
-          hash: parsedUri.hash || "",
-          query: req.query
+          pathname: pathname,
+          search: search,
+          hash: hash,
+          query: query
         },
         navigate: function navigate() {
           throw new Error("You can't call navigate on the server.");
@@ -164,10 +178,13 @@ var ServerLocation = function ServerLocation(_ref2) {
     children
   );
 };
-
 ////////////////////////////////////////////////////////////////////////////////
 // Sets baseuri and basepath for nested routers and links
-var BaseContext = createNamedContext("Base", { baseuri: "/", basepath: "/" });
+var BaseContext = createNamedContext("Base", {
+  baseuri: "/",
+  basepath: "/",
+  navigate: globalHistory.navigate
+});
 
 ////////////////////////////////////////////////////////////////////////////////
 // The main event, welcome to the show everybody.
@@ -208,7 +225,10 @@ var RouterImpl = function (_React$PureComponent) {
         component = _props$component === undefined ? "div" : _props$component,
         domProps = _objectWithoutProperties(_props, ["location", "navigate", "basepath", "primary", "children", "baseuri", "component"]);
 
-    var routes = React.Children.map(children, createRoute(basepath));
+    var routes = React.Children.toArray(children).reduce(function (array, child) {
+      var routes = createRoute(basepath)(child);
+      return array.concat(routes);
+    }, []);
     var pathname = location.pathname;
 
 
@@ -234,7 +254,7 @@ var RouterImpl = function (_React$PureComponent) {
 
       var clone = React.cloneElement(element, props, element.props.children ? React.createElement(
         Router,
-        { primary: primary },
+        { location: location, primary: primary },
         element.props.children
       ) : undefined);
 
@@ -245,7 +265,9 @@ var RouterImpl = function (_React$PureComponent) {
 
       return React.createElement(
         BaseContext.Provider,
-        { value: { baseuri: uri, basepath: basepath } },
+        {
+          value: { baseuri: uri, basepath: basepath, navigate: props.navigate }
+        },
         React.createElement(
           FocusWrapper,
           wrapperProps,
@@ -317,7 +339,7 @@ var FocusHandlerImpl = function (_React$Component2) {
     }
 
     return _ret2 = (_temp2 = (_this4 = _possibleConstructorReturn(this, _React$Component2.call.apply(_React$Component2, [this].concat(args))), _this4), _this4.state = {}, _this4.requestFocus = function (node) {
-      if (!_this4.state.shouldFocus) {
+      if (!_this4.state.shouldFocus && node) {
         node.focus();
       }
     }, _temp2), _possibleConstructorReturn(_this4, _ret2);
@@ -372,7 +394,7 @@ var FocusHandlerImpl = function (_React$Component2) {
     } else {
       if (initialRender) {
         initialRender = false;
-      } else {
+      } else if (this.node) {
         // React polyfills [autofocus] and it fires earlier than cDM,
         // so we were stealing focus away, this line prevents that.
         if (!this.node.contains(document.activeElement)) {
@@ -389,20 +411,17 @@ var FocusHandlerImpl = function (_React$Component2) {
         children = _props2.children,
         style = _props2.style,
         requestFocus = _props2.requestFocus,
-        _props2$role = _props2.role,
-        role = _props2$role === undefined ? "group" : _props2$role,
         _props2$component = _props2.component,
         Comp = _props2$component === undefined ? "div" : _props2$component,
         uri = _props2.uri,
         location = _props2.location,
-        domProps = _objectWithoutProperties(_props2, ["children", "style", "requestFocus", "role", "component", "uri", "location"]);
+        domProps = _objectWithoutProperties(_props2, ["children", "style", "requestFocus", "component", "uri", "location"]);
 
     return React.createElement(
       Comp,
       _extends({
         style: _extends({ outline: "none" }, style),
         tabIndex: "-1",
-        role: role,
         ref: function ref(n) {
           return _this5.node = n;
         }
@@ -456,8 +475,9 @@ var Link = forwardRef(function (_ref4, ref) {
               anchorProps = _objectWithoutProperties(props, ["to", "state", "replace", "getProps"]);
 
           var href = resolve(to, baseuri);
-          var isCurrent = location.pathname === href;
-          var isPartiallyCurrent = startsWith(location.pathname, href);
+          var encodedHref = encodeURI(href);
+          var isCurrent = location.pathname === encodedHref;
+          var isPartiallyCurrent = startsWith(location.pathname, encodedHref);
 
           return React.createElement("a", _extends({
             ref: ref || innerRef,
@@ -468,7 +488,18 @@ var Link = forwardRef(function (_ref4, ref) {
               if (anchorProps.onClick) anchorProps.onClick(event);
               if (shouldNavigate(event)) {
                 event.preventDefault();
-                navigate(href, { state: state, replace: replace });
+                var shouldReplace = replace;
+                if (typeof replace !== "boolean" && isCurrent) {
+                  var _location$state = _extends({}, location.state),
+                      key = _location$state.key,
+                      restState = _objectWithoutProperties(_location$state, ["key"]);
+
+                  shouldReplace = shallowCompare(_extends({}, state), restState);
+                }
+                navigate(href, {
+                  state: state,
+                  replace: shouldReplace
+                });
               }
             }
           }));
@@ -477,6 +508,12 @@ var Link = forwardRef(function (_ref4, ref) {
     }
   );
 });
+
+Link.displayName = "Link";
+
+process.env.NODE_ENV !== "production" ? Link.propTypes = {
+  to: PropTypes.string.isRequired
+} : void 0;
 
 ////////////////////////////////////////////////////////////////////////////////
 function RedirectRequest(uri) {
@@ -593,6 +630,63 @@ var Match = function Match(_ref8) {
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+// Hooks
+
+var useLocation = function useLocation() {
+  var context = useContext(LocationContext);
+
+  if (!context) {
+    throw new Error("useLocation hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router");
+  }
+
+  return context.location;
+};
+
+var useNavigate = function useNavigate() {
+  var context = useContext(BaseContext);
+
+  if (!context) {
+    throw new Error("useNavigate hook was used but a BaseContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router");
+  }
+
+  return context.navigate;
+};
+
+var useParams = function useParams() {
+  var context = useContext(BaseContext);
+
+  if (!context) {
+    throw new Error("useParams hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router");
+  }
+
+  var location = useLocation();
+
+  var results = match(context.basepath, location.pathname);
+
+  return results ? results.params : null;
+};
+
+var useMatch = function useMatch(path) {
+  if (!path) {
+    throw new Error("useMatch(path: string) requires an argument of a string to match against");
+  }
+  var context = useContext(BaseContext);
+
+  if (!context) {
+    throw new Error("useMatch hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router");
+  }
+
+  var location = useLocation();
+
+  var resolvedPath = resolve(path, context.baseuri);
+  var result = match(resolvedPath, location.pathname);
+  return result ? _extends({}, result.params, {
+    uri: result.uri,
+    path: path
+  }) : null;
+};
+
+////////////////////////////////////////////////////////////////////////////////
 // Junk
 var stripSlashes = function stripSlashes(str) {
   return str.replace(/(^\/+|\/+$)/g, "");
@@ -604,9 +698,12 @@ var createRoute = function createRoute(basepath) {
       return null;
     }
 
+    if (element.type === React.Fragment && element.props.children) {
+      return React.Children.map(element.props.children, createRoute(basepath));
+    }
     !(element.props.path || element.props.default || element.type === Redirect) ? process.env.NODE_ENV !== "production" ? invariant(false, "<Router>: Children of <Router> must have a `path` or `default` prop, or be a `<Redirect>`. None found on element type `" + element.type + "`") : invariant(false) : void 0;
 
-    !!(element.type === Redirect && (!element.props.from || !element.props.to)) ? process.env.NODE_ENV !== "production" ? invariant(false, "<Redirect from=\"" + element.props.from + " to=\"" + element.props.to + "\"/> requires both \"from\" and \"to\" props when inside a <Router>.") : invariant(false) : void 0;
+    !!(element.type === Redirect && (!element.props.from || !element.props.to)) ? process.env.NODE_ENV !== "production" ? invariant(false, "<Redirect from=\"" + element.props.from + "\" to=\"" + element.props.to + "\"/> requires both \"from\" and \"to\" props when inside a <Router>.") : invariant(false) : void 0;
 
     !!(element.type === Redirect && !validateRedirect(element.props.from, element.props.to)) ? process.env.NODE_ENV !== "production" ? invariant(false, "<Redirect from=\"" + element.props.from + " to=\"" + element.props.to + "\"/> has mismatched dynamic segments, ensure both paths have the exact same dynamic segments.") : invariant(false) : void 0;
 
@@ -631,4 +728,4 @@ var shouldNavigate = function shouldNavigate(event) {
 };
 
 ////////////////////////////////////////////////////////////////////////
-export { Link, Location, LocationProvider, Match, Redirect, Router, ServerLocation, createHistory, createMemorySource, isRedirect, navigate, redirectTo, globalHistory };
+export { Link, Location, LocationProvider, Match, Redirect, Router, ServerLocation, createHistory, createMemorySource, isRedirect, navigate, redirectTo, globalHistory, match as matchPath, useLocation, useNavigate, useParams, useMatch };
