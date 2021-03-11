@@ -2,6 +2,7 @@
 import React from "react";
 import urlPgk from "url";
 import warning from "warning";
+import React, { useContext } from "react";
 import PropTypes from "prop-types";
 import invariant from "invariant";
 import createContext from "create-react-context";
@@ -12,7 +13,8 @@ import {
   resolve,
   match,
   insertParams,
-  validateRedirect
+  validateRedirect,
+  shallowCompare
 } from "./lib/utils";
 import {
   globalHistory,
@@ -25,8 +27,7 @@ import {
 
 const createNamedContext = (name, defaultValue) => {
   const Ctx = createContext(defaultValue);
-  Ctx.Consumer.displayName = `${name}.Consumer`;
-  Ctx.Provider.displayName = `${name}.Provider`;
+  Ctx.displayName = name;
   return Ctx;
 };
 
@@ -95,6 +96,7 @@ class LocationProvider extends React.Component {
       state: { refs },
       props: { history }
     } = this;
+    history._onTransitionComplete();
     refs.unlisten = history.listen(() => {
       Promise.resolve().then(() => {
         // TODO: replace rAF with react deferred update API when it's ready https://github.com/facebook/react/issues/13306
@@ -129,16 +131,27 @@ class LocationProvider extends React.Component {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-let ServerLocation = ({ req, children }) => {
-  const parsedUri = urlPgk.parse(req.url);
+let ServerLocation = ({ url, children }) => {
+  let searchIndex = url.indexOf("?");
+  let searchExists = searchIndex > -1;
+  let pathname;
+  let search = "";
+  let hash = "";
+
+  if (searchExists) {
+    pathname = url.substring(0, searchIndex);
+    search = url.substring(searchIndex);
+  } else {
+    pathname = url;
+  }
+
   return (
     <LocationContext.Provider
       value={{
         location: {
-          pathname: parsedUri.pathname,
-          search: parsedUri.search || "",
-          hash: parsedUri.hash || "",
-          query: req.query
+          pathname,
+          search,
+          hash
         },
         navigate: () => {
           throw new Error("You can't call navigate on the server.");
@@ -149,10 +162,13 @@ let ServerLocation = ({ req, children }) => {
     </LocationContext.Provider>
   );
 };
-
 ////////////////////////////////////////////////////////////////////////////////
 // Sets baseuri and basepath for nested routers and links
-let BaseContext = createNamedContext("Base", { baseuri: "/", basepath: "/" });
+let BaseContext = createNamedContext("Base", {
+  baseuri: "/",
+  basepath: "/",
+  navigate: globalHistory.navigate
+});
 
 ////////////////////////////////////////////////////////////////////////////////
 // The main event, welcome to the show everybody.
@@ -184,7 +200,10 @@ class RouterImpl extends React.PureComponent {
       component = "div",
       ...domProps
     } = this.props;
-    let routes = React.Children.map(children, createRoute(basepath));
+    let routes = React.Children.toArray(children).reduce((array, child) => {
+      const routes = createRoute(basepath)(child);
+      return array.concat(routes);
+    }, []);
     let { pathname } = location;
 
     let match = pick(routes, pathname);
@@ -211,7 +230,9 @@ class RouterImpl extends React.PureComponent {
         element,
         props,
         element.props.children ? (
-          <Router primary={primary}>{element.props.children}</Router>
+          <Router location={location} primary={primary}>
+            {element.props.children}
+          </Router>
         ) : (
           undefined
         )
@@ -225,7 +246,9 @@ class RouterImpl extends React.PureComponent {
         : domProps;
 
       return (
-        <BaseContext.Provider value={{ baseuri: uri, basepath }}>
+        <BaseContext.Provider
+          value={{ baseuri: uri, basepath, navigate: props.navigate }}
+        >
           <FocusWrapper {...wrapperProps}>{clone}</FocusWrapper>
         </BaseContext.Provider>
       );
@@ -323,7 +346,7 @@ class FocusHandlerImpl extends React.Component {
     } else {
       if (initialRender) {
         initialRender = false;
-      } else {
+      } else if (this.node) {
         // React polyfills [autofocus] and it fires earlier than cDM,
         // so we were stealing focus away, this line prevents that.
         if (!this.node.contains(document.activeElement)) {
@@ -334,7 +357,7 @@ class FocusHandlerImpl extends React.Component {
   }
 
   requestFocus = node => {
-    if (!this.state.shouldFocus) {
+    if (!this.state.shouldFocus && node) {
       node.focus();
     }
   };
@@ -344,17 +367,16 @@ class FocusHandlerImpl extends React.Component {
       children,
       style,
       requestFocus,
-      role = "group",
       component: Comp = "div",
       uri,
       location,
       ...domProps
     } = this.props;
+
     return (
       <Comp
         style={{ outline: "none", ...style }}
         tabIndex="-1"
-        role={role}
         ref={n => (this.node = n)}
         {...domProps}
       >
@@ -383,8 +405,9 @@ let Link = forwardRef(({ innerRef, ...props }, ref) => (
         {({ location, navigate }) => {
           let { to, state, replace, getProps = k, ...anchorProps } = props;
           let href = resolve(to, baseuri);
-          let isCurrent = location.pathname === href;
-          let isPartiallyCurrent = startsWith(location.pathname, href);
+          let encodedHref = encodeURI(href);
+          let isCurrent = location.pathname === encodedHref;
+          let isPartiallyCurrent = startsWith(location.pathname, encodedHref);
 
           return (
             <a
@@ -397,7 +420,15 @@ let Link = forwardRef(({ innerRef, ...props }, ref) => (
                 if (anchorProps.onClick) anchorProps.onClick(event);
                 if (shouldNavigate(event)) {
                   event.preventDefault();
-                  navigate(href, { state, replace });
+                  let shouldReplace = replace;
+                  if (typeof replace !== "boolean" && isCurrent) {
+                    const { key, ...restState } = { ...location.state };
+                    shouldReplace = shallowCompare({ ...state }, restState);
+                  }
+                  navigate(href, {
+                    state,
+                    replace: shouldReplace
+                  });
                 }
               }}
             />
@@ -407,6 +438,12 @@ let Link = forwardRef(({ innerRef, ...props }, ref) => (
     )}
   </BaseContext.Consumer>
 ));
+
+Link.displayName = "Link";
+
+Link.propTypes = {
+  to: PropTypes.string.isRequired
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 function RedirectRequest(uri) {
@@ -493,6 +530,76 @@ let Match = ({ path, children }) => (
 );
 
 ////////////////////////////////////////////////////////////////////////////////
+// Hooks
+
+const useLocation = () => {
+  const context = useContext(LocationContext);
+
+  if (!context) {
+    throw new Error(
+      "useLocation hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router"
+    );
+  }
+
+  return context.location;
+};
+
+const useNavigate = () => {
+  const context = useContext(BaseContext);
+
+  if (!context) {
+    throw new Error(
+      "useNavigate hook was used but a BaseContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router"
+    );
+  }
+
+  return context.navigate;
+};
+
+const useParams = () => {
+  const context = useContext(BaseContext);
+
+  if (!context) {
+    throw new Error(
+      "useParams hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router"
+    );
+  }
+
+  const location = useLocation();
+
+  const results = match(context.basepath, location.pathname);
+
+  return results ? results.params : null;
+};
+
+const useMatch = path => {
+  if (!path) {
+    throw new Error(
+      "useMatch(path: string) requires an argument of a string to match against"
+    );
+  }
+  const context = useContext(BaseContext);
+
+  if (!context) {
+    throw new Error(
+      "useMatch hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router"
+    );
+  }
+
+  const location = useLocation();
+
+  const resolvedPath = resolve(path, context.baseuri);
+  const result = match(resolvedPath, location.pathname);
+  return result
+    ? {
+        ...result.params,
+        uri: result.uri,
+        path
+      }
+    : null;
+};
+
+////////////////////////////////////////////////////////////////////////////////
 // Junk
 let stripSlashes = str => str.replace(/(^\/+|\/+$)/g, "");
 
@@ -501,18 +608,17 @@ let createRoute = basepath => element => {
     return null;
   }
 
+  if (element.type === React.Fragment && element.props.children) {
+    return React.Children.map(element.props.children, createRoute(basepath));
+  }
   invariant(
     element.props.path || element.props.default || element.type === Redirect,
-    `<Router>: Children of <Router> must have a \`path\` or \`default\` prop, or be a \`<Redirect>\`. None found on element type \`${
-      element.type
-    }\``
+    `<Router>: Children of <Router> must have a \`path\` or \`default\` prop, or be a \`<Redirect>\`. None found on element type \`${element.type}\``
   );
 
   invariant(
     !(element.type === Redirect && (!element.props.from || !element.props.to)),
-    `<Redirect from="${element.props.from} to="${
-      element.props.to
-    }"/> requires both "from" and "to" props when inside a <Router>.`
+    `<Redirect from="${element.props.from}" to="${element.props.to}"/> requires both "from" and "to" props when inside a <Router>.`
   );
 
   invariant(
@@ -520,9 +626,7 @@ let createRoute = basepath => element => {
       element.type === Redirect &&
       !validateRedirect(element.props.from, element.props.to)
     ),
-    `<Redirect from="${element.props.from} to="${
-      element.props.to
-    }"/> has mismatched dynamic segments, ensure both paths have the exact same dynamic segments.`
+    `<Redirect from="${element.props.from} to="${element.props.to}"/> has mismatched dynamic segments, ensure both paths have the exact same dynamic segments.`
   );
 
   if (element.props.default) {
@@ -563,5 +667,10 @@ export {
   isRedirect,
   navigate,
   redirectTo,
-  globalHistory
+  globalHistory,
+  match as matchPath,
+  useLocation,
+  useNavigate,
+  useParams,
+  useMatch
 };

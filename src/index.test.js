@@ -1,8 +1,9 @@
 /* eslint-disable react/prop-types */
 import React from "react";
 import ReactDOM from "react-dom";
+import ReactTestUtils from "react-dom/test-utils";
 import renderer from "react-test-renderer";
-import { renderToString } from "react-dom/server";
+import { renderToString, renderToStaticMarkup } from "react-dom/server";
 
 import {
   createHistory,
@@ -13,7 +14,11 @@ import {
   Match,
   Redirect,
   isRedirect,
-  ServerLocation
+  ServerLocation,
+  useLocation,
+  useNavigate,
+  useParams,
+  useMatch
 } from "./index";
 
 let snapshot = ({ pathname, element }) => {
@@ -31,7 +36,8 @@ let runWithNavigation = (element, pathname = "/") => {
   let wrapper = renderer.create(
     <LocationProvider history={history}>{element}</LocationProvider>
   );
-  const snapshot = string => {
+
+  const snapshot = () => {
     expect(wrapper.toJSON()).toMatchSnapshot();
   };
   return { history, snapshot, wrapper };
@@ -48,6 +54,12 @@ let Group = ({ groupId, children }) => (
 let PropsPrinter = props => <pre>{JSON.stringify(props, null, 2)}</pre>;
 let Reports = ({ children }) => <div>Reports {children}</div>;
 let AnnualReport = () => <div>Annual Report</div>;
+let PrintLocation = ({ location }) => (
+  <div>
+    <div>location.pathname: [{location.pathname}]</div>
+    <div>location.search: [{location.search}]</div>
+  </div>
+);
 
 describe("smoke tests", () => {
   it(`renders the root component at "/"`, () => {
@@ -83,6 +95,21 @@ describe("Router children", () => {
         <Router>
           <Home path="/" />
           {null}
+        </Router>
+      )
+    });
+  });
+
+  it("allows for fragments", () => {
+    snapshot({
+      pathname: "/report",
+      element: (
+        <Router>
+          <Home path="/" />
+          <React.Fragment>
+            <Dash path="/dash" />
+            <AnnualReport path="/report" />
+          </React.Fragment>
         </Router>
       )
     });
@@ -145,6 +172,24 @@ describe("passed props", () => {
           <Group path="group/:groupId">
             <User path="user/:userId" />
           </Group>
+        </Router>
+      )
+    });
+  });
+
+  it("router location prop to nested path", () => {
+    const pathname = "/reports/1";
+    const history = createHistory(createMemorySource(pathname));
+    const location = history.location;
+
+    snapshot({
+      pathname: "/",
+      element: (
+        <Router location={location}>
+          <Dash path="/">
+            <Dash path="/" />
+            <Reports path="reports/:reportId" />
+          </Dash>
         </Router>
       )
     });
@@ -446,6 +491,139 @@ describe("links", () => {
       )
     });
   });
+
+  it("calls history.pushState when clicked", () => {
+    const testSource = createMemorySource("/");
+    testSource.history.replaceState = jest.fn();
+    testSource.history.pushState = jest.fn();
+    const testHistory = createHistory(testSource);
+    const SomePage = () => <Link to="/reports">Go To Reports</Link>;
+    const div = document.createElement("div");
+    ReactDOM.render(
+      <LocationProvider history={testHistory}>
+        <Router>
+          <SomePage path="/" />
+          <Reports path="/reports" />
+        </Router>
+      </LocationProvider>,
+      div
+    );
+    try {
+      const a = div.querySelector("a");
+      ReactTestUtils.Simulate.click(a, { button: 0 });
+      expect(testSource.history.pushState).toHaveBeenCalled();
+    } finally {
+      ReactDOM.unmountComponentAtNode(div);
+    }
+  });
+
+  it("calls history.pushState when clicked -- even if navigated before", () => {
+    const testSource = createMemorySource("/#payload=...");
+    const { history } = testSource;
+    history.replaceState = jest.fn(history.replaceState.bind(history));
+    history.pushState = jest.fn(history.pushState.bind(history));
+    const testHistory = createHistory(testSource);
+    // Simulate that payload in URL hash is being hidden
+    // before React renders anything ...
+    testHistory.navigate("/", { replace: true });
+    expect(testSource.history.replaceState).toHaveBeenCalled();
+    const SomePage = () => <Link to="/reports">Go To Reports</Link>;
+    const div = document.createElement("div");
+    ReactDOM.render(
+      <LocationProvider history={testHistory}>
+        <Router>
+          <SomePage path="/" />
+          <Reports path="/reports" />
+        </Router>
+      </LocationProvider>,
+      div
+    );
+    try {
+      const a = div.querySelector("a");
+      ReactTestUtils.Simulate.click(a, { button: 0 });
+      expect(testSource.history.pushState).toHaveBeenCalled();
+    } finally {
+      ReactDOM.unmountComponentAtNode(div);
+    }
+  });
+
+  it("calls history.replaceState when link for current path is clicked without state", () => {
+    const testSource = createMemorySource("/test");
+    testSource.history.replaceState = jest.fn();
+    const testHistory = createHistory(testSource);
+    const TestPage = () => <Link to="/test">Go To Test</Link>;
+    const div = document.createElement("div");
+    ReactDOM.render(
+      <LocationProvider history={testHistory}>
+        <Router>
+          <TestPage path="/test" />
+        </Router>
+      </LocationProvider>,
+      div
+    );
+    try {
+      const a = div.querySelector("a");
+      ReactTestUtils.Simulate.click(a, { button: 0 });
+      expect(testSource.history.replaceState).toHaveBeenCalledTimes(1);
+    } finally {
+      ReactDOM.unmountComponentAtNode(div);
+    }
+  });
+  it("calls history.replaceState when link for current path is clicked with the same state", () => {
+    const testSource = createMemorySource("/test");
+    testSource.history.replaceState = jest.fn();
+    const testHistory = createHistory(testSource);
+    testHistory.navigate("/test", { state: { id: "123" } });
+    const TestPage = () => (
+      <Link to="/test" state={{ id: "123" }}>
+        Go To Test
+      </Link>
+    );
+    const div = document.createElement("div");
+    ReactDOM.render(
+      <LocationProvider history={testHistory}>
+        <Router>
+          <TestPage path="/test" />
+        </Router>
+      </LocationProvider>,
+      div
+    );
+    try {
+      const a = div.querySelector("a");
+      ReactTestUtils.Simulate.click(a, { button: 0 });
+      expect(testSource.history.replaceState).toHaveBeenCalledTimes(1);
+    } finally {
+      ReactDOM.unmountComponentAtNode(div);
+    }
+  });
+  it("calls history.pushState when link for current path is clicked with different state", async () => {
+    const testSource = createMemorySource("/test");
+    testSource.history.pushState = jest.fn(testSource.history.pushState);
+    const testHistory = createHistory(testSource);
+    const TestPage = () => (
+      <Link to="/test" state={{ id: 1 }}>
+        Go To Test
+      </Link>
+    );
+    const div = document.createElement("div");
+    ReactDOM.render(
+      <LocationProvider history={testHistory}>
+        <Router>
+          <TestPage path="/test" />
+        </Router>
+      </LocationProvider>,
+      div
+    );
+    try {
+      const a = div.querySelector("a");
+      ReactTestUtils.Simulate.click(a, { button: 0 });
+      await testHistory.navigate("/test", { state: { id: 2 } });
+      ReactTestUtils.Simulate.click(a, { button: 0 });
+      expect(testSource.history.pushState).toHaveBeenCalledTimes(2);
+    } finally {
+      ReactDOM.unmountComponentAtNode(div);
+    }
+  });
 });
 
 describe("transitions", () => {
@@ -512,8 +690,6 @@ describe("relative navigate prop", () => {
     await relativeNavigate("settings");
     snapshot();
   });
-
-  it("navigates relative", () => {});
 });
 
 describe("nested routers", () => {
@@ -557,8 +733,26 @@ describe("Match", () => {
   });
 });
 
+describe("location", () => {
+  it("correctly parses pathname, search and hash fields", () => {
+    let testHistory = createHistory(
+      createMemorySource("/print-location?it=works&with=queries")
+    );
+    let wrapper = renderer.create(
+      <LocationProvider history={testHistory}>
+        <Router>
+          <PrintLocation path="/print-location" />
+        </Router>
+      </LocationProvider>
+    );
+    const tree = wrapper.toJSON();
+    expect(tree).toMatchSnapshot();
+  });
+});
+
 // React 16.4 is buggy https://github.com/facebook/react/issues/12968
-describe.skip("ServerLocation", () => {
+// so some tests are skipped
+describe("ServerLocation", () => {
   let NestedRouter = () => (
     <Router>
       <Home path="/home" />
@@ -571,10 +765,11 @@ describe.skip("ServerLocation", () => {
       <Group path="/groups/:groupId" />
       <Redirect from="/g/:groupId" to="/groups/:groupId" />
       <NestedRouter path="/nested/*" />
+      <PrintLocation path="/print-location" />
     </Router>
   );
 
-  it("works", () => {
+  it.skip("works", () => {
     expect(
       renderToString(
         <ServerLocation url="/">
@@ -592,7 +787,7 @@ describe.skip("ServerLocation", () => {
     ).toMatchSnapshot();
   });
 
-  test("redirects", () => {
+  test.skip("redirects", () => {
     let redirectedPath = "/g/123";
     let markup;
     try {
@@ -608,7 +803,7 @@ describe.skip("ServerLocation", () => {
     expect(markup).not.toBeDefined();
   });
 
-  test("nested redirects", () => {
+  test.skip("nested redirects", () => {
     let redirectedPath = "/nested";
     let markup;
     try {
@@ -622,5 +817,204 @@ describe.skip("ServerLocation", () => {
       expect(error.uri).toBe("/nested/home");
     }
     expect(markup).not.toBeDefined();
+  });
+
+  test("location.search", () => {
+    let markup = renderToStaticMarkup(
+      <ServerLocation url="/print-location?it=works">
+        <App />
+      </ServerLocation>
+    );
+
+    expect(markup).toContain("location.pathname: [/print-location]");
+    expect(markup).toContain("location.search: [?it=works]");
+  });
+});
+
+describe("trailing wildcard", () => {
+  it("passes down wildcard name to the component as prop", () => {
+    const FileBrowser = ({ filePath }) => filePath;
+
+    snapshot({
+      pathname: `/files/README.md`,
+      element: (
+        <Router>
+          <FileBrowser path="files/*filePath" />
+        </Router>
+      )
+    });
+  });
+
+  it("passes down '*' as the prop name if not specified", () => {
+    const FileBrowser = props => props["*"];
+
+    snapshot({
+      pathname: `/files/README.md`,
+      element: (
+        <Router>
+          <FileBrowser path="files/*" />
+        </Router>
+      )
+    });
+  });
+
+  it("passes down to Match as well", () => {
+    snapshot({
+      pathname: `/somewhere/deep/i/mean/really/deep`,
+      element: (
+        <Match path="/somewhere/deep/*rest">
+          {props => <div>{props.match.rest}</div>}
+        </Match>
+      )
+    });
+  });
+
+  it("passes down to Match as unnamed '*'", () => {
+    snapshot({
+      pathname: `/somewhere/deep/i/mean/really/deep`,
+      element: (
+        <Match path="/somewhere/deep/*">
+          {props => <div>{props.match["*"]}</div>}
+        </Match>
+      )
+    });
+  });
+});
+
+describe("hooks", () => {
+  describe("useLocation", () => {
+    it("returns the location", () => {
+      function Fixture() {
+        const location = useLocation();
+        return `path: ${location.pathname}`;
+      }
+
+      snapshot({
+        pathname: `/this/path/is/returned`,
+        element: (
+          <Router>
+            <Fixture path="/this/path/is/returned" />
+          </Router>
+        )
+      });
+    });
+
+    it("throws an error if a location context hasnt been rendered", () => {
+      function Fixture() {
+        const location = useLocation();
+        return `path: ${location.pathname}`;
+      }
+
+      expect(() => {
+        renderToString(<Fixture />);
+      }).toThrow(
+        "useLocation hook was used but a LocationContext.Provider was not found in the parent tree. Make sure this is used in a component that is a child of Router"
+      );
+    });
+  });
+
+  describe("useNavigate", () => {
+    it("navigates relative", async () => {
+      let navigate;
+
+      const Foo = () => {
+        navigate = useNavigate();
+        return `IF_THIS_IS_IN_SNAPSHOT_BAAAAADDDDDDDD`;
+      };
+
+      const Bar = () => `THIS_IS_WHAT_WE_WANT_TO_SEE_IN_SNAPSHOT`;
+
+      const { snapshot } = runWithNavigation(
+        <Router>
+          <Foo path="/foo" />
+          <Bar path="/bar" />
+        </Router>,
+        "/foo"
+      );
+      snapshot();
+      await navigate("/bar");
+      snapshot();
+    });
+    it("is equals to props.navigate for route components", async () => {
+      let navigate;
+      let propNavigate;
+
+      const Foo = props => {
+        navigate = useNavigate();
+        propNavigate = props.navigate;
+        return `Foo`;
+      };
+
+      runWithNavigation(
+        <Router>
+          <Foo path="/foo" />
+        </Router>,
+        "/foo"
+      );
+      expect(navigate).toBe(propNavigate);
+    });
+  });
+
+  describe("useParams", () => {
+    it("gives an object of the params from the route", () => {
+      const Fixture = () => {
+        const params = useParams();
+        return JSON.stringify(params);
+      };
+
+      snapshot({
+        pathname: "/foo/123/baz/hi",
+        element: (
+          <Router>
+            <Fixture path="/foo/:bar/baz/:bax" />
+          </Router>
+        )
+      });
+    });
+  });
+
+  describe("useMatch", () => {
+    it("matches on direct routes", async () => {
+      let match;
+
+      const Foo = () => {
+        match = useMatch("/foo");
+        return ``;
+      };
+
+      const { snapshot } = runWithNavigation(
+        <Router>
+          <Foo path="/foo" />
+        </Router>,
+        "/foo"
+      );
+
+      expect(match).not.toBe(null);
+    });
+
+    it("matches on matching child routes", () => {
+      let matchExact;
+      let matchSplat;
+
+      const Foo = () => {
+        matchExact = useMatch("/foo");
+        matchSplat = useMatch("/foo/*");
+        return ``;
+      };
+
+      const Bar = () => "";
+
+      const { snapshot } = runWithNavigation(
+        <Router>
+          <Foo path="/foo">
+            <Bar path="/bar" />
+          </Foo>
+        </Router>,
+        "/foo/bar"
+      );
+
+      expect(matchExact).toBe(null);
+      expect(matchSplat).not.toBe(null);
+    });
   });
 });

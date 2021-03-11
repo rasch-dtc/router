@@ -1,6 +1,36 @@
 let getLocation = source => {
+  const {
+    search,
+    hash,
+    href,
+    origin,
+    protocol,
+    host,
+    hostname,
+    port
+  } = source.location;
+  let { pathname } = source.location;
+
+  if (!pathname && href && canUseDOM) {
+    const url = new URL(href);
+    pathname = url.pathname;
+  }
+  
+  const encodedPathname = pathname
+  .split("/")
+  .map(pathPart => encodeURIComponent(decodeURIComponent(pathPart)))
+  .join("/");
+
   return {
-    ...source.location,
+    pathname: encodedPathname,
+    search,
+    hash,
+    href,
+    origin,
+    protocol,
+    host,
+    hostname,
+    port,
     state: source.history.state,
     key: (source.history.state && source.history.state.key) || "initial"
   };
@@ -43,16 +73,20 @@ let createHistory = (source, options) => {
     },
 
     navigate(to, { state, replace = false } = {}) {
-      state = { ...state, key: Date.now() + "" };
-      // try...catch iOS Safari limits to 100 pushState calls
-      try {
-        if (transitioning || replace) {
-          source.history.replaceState(state, null, to);
-        } else {
-          source.history.pushState(state, null, to);
+      if (typeof to === "number") {
+        source.history.go(to);
+      } else {
+        state = { ...state, key: Date.now() + "" };
+        // try...catch iOS Safari limits to 100 pushState calls
+        try {
+          if (transitioning || replace) {
+            source.history.replaceState(state, null, to);
+          } else {
+            source.history.pushState(state, null, to);
+          }
+        } catch (e) {
+          source.location[replace ? "replace" : "assign"](to);
         }
-      } catch (e) {
-        source.location[replace ? "replace" : "assign"](to);
       }
 
       location = getLocation(source);
@@ -66,10 +100,16 @@ let createHistory = (source, options) => {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Stores history entries in memory for testing or other platforms like Native
-let createMemorySource = (initialPathname = "/") => {
+let createMemorySource = (initialPath = "/") => {
+  let searchIndex = initialPath.indexOf("?");
+  let initialLocation = {
+    pathname:
+      searchIndex > -1 ? initialPath.substr(0, searchIndex) : initialPath,
+    search: searchIndex > -1 ? initialPath.substr(searchIndex) : ""
+  };
   let index = 0;
-  let stack = [{ pathname: initialPathname, search: "" }];
-  let states = [];
+  let stack = [initialLocation];
+  let states = [null];
 
   return {
     get location() {
@@ -90,13 +130,22 @@ let createMemorySource = (initialPathname = "/") => {
       pushState(state, _, uri) {
         let [pathname, search = ""] = uri.split("?");
         index++;
-        stack.push({ pathname, search });
+        stack.push({ pathname, search: search.length ? `?${search}` : search });
         states.push(state);
       },
       replaceState(state, _, uri) {
         let [pathname, search = ""] = uri.split("?");
         stack[index] = { pathname, search };
         states[index] = state;
+      },
+      go(to) {
+        let newIndex = index + to;
+
+        if (newIndex < 0 || newIndex > states.length - 1) {
+          return;
+        }
+
+        index = newIndex;
       }
     }
   };

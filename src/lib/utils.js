@@ -58,12 +58,12 @@ let pick = (routes, uri) => {
       let routeSegment = routeSegments[index];
       let uriSegment = uriSegments[index];
 
-      let isSplat = routeSegment === "*";
-      if (isSplat) {
+      if (isSplat(routeSegment)) {
         // Hit a splat, just grab the rest, and return a match
         // uri:   /files/documents/work
         // route: /files/*
-        params["*"] = uriSegments
+        const param = routeSegment.slice(1) || "*";
+        params[param] = uriSegments
           .slice(index)
           .map(decodeURIComponent)
           .join("/");
@@ -84,11 +84,7 @@ let pick = (routes, uri) => {
         let matchIsNotReserved = reservedNames.indexOf(dynamicMatch[1]) === -1;
         invariant(
           matchIsNotReserved,
-          `<Router> dynamic segment "${
-            dynamicMatch[1]
-          }" is a reserved name. Please use a different name in path "${
-            route.path
-          }".`
+          `<Router> dynamic segment "${dynamicMatch[1]}" is a reserved name. Please use a different name in path "${route.path}".`
         );
         let value = decodeURIComponent(uriSegment);
         params[dynamicMatch[1]] = value;
@@ -185,17 +181,22 @@ let resolve = (to, base) => {
 
 ////////////////////////////////////////////////////////////////////////////////
 // insertParams(path, params)
-let insertParams = (path, params) => {
-  let segments = segmentize(path);
-  return (
+
+const insertParams = (path, params) => {
+  let [pathBase, query = ""] = path.split("?");
+  let segments = segmentize(pathBase);
+  let constructedPath =
     "/" +
     segments
       .map(segment => {
         let match = paramRe.exec(segment);
         return match ? params[match[1]] : segment;
       })
-      .join("/")
-  );
+      .join("/");
+  const { location: { search = "" } = {} } = params;
+  const searchSplit = search.split("?")[1] || "";
+  constructedPath = addQuery(constructedPath, query, searchSplit);
+  return constructedPath;
 };
 
 let validateRedirect = (from, to) => {
@@ -223,7 +224,7 @@ let ROOT_POINTS = 1;
 
 let isRootSegment = segment => segment === "";
 let isDynamic = segment => paramRe.test(segment);
-let isSplat = segment => segment === "*";
+let isSplat = segment => segment && segment[0] === "*";
 
 let rankRoute = (route, index) => {
   let score = route.default
@@ -242,9 +243,8 @@ let rankRoute = (route, index) => {
 let rankRoutes = routes =>
   routes
     .map(rankRoute)
-    .sort(
-      (a, b) =>
-        a.score < b.score ? 1 : a.score > b.score ? -1 : a.index - b.index
+    .sort((a, b) =>
+      a.score < b.score ? 1 : a.score > b.score ? -1 : a.index - b.index
     );
 
 let segmentize = uri =>
@@ -253,9 +253,33 @@ let segmentize = uri =>
     .replace(/(^\/+|\/+$)/g, "")
     .split("/");
 
-let addQuery = (pathname, query) => pathname + (query ? `?${query}` : "");
+let addQuery = (pathname, ...query) => {
+  query = query.filter(q => q && q.length > 0);
+  return pathname + (query && query.length > 0 ? `?${query.join("&")}` : "");
+};
 
 let reservedNames = ["uri", "path"];
 
+/**
+ * Shallow compares two objects.
+ * @param {Object} obj1 The first object to compare.
+ * @param {Object} obj2 The second object to compare.
+ */
+const shallowCompare = (obj1, obj2) => {
+  const obj1Keys = Object.keys(obj1);
+  return (
+    obj1Keys.length === Object.keys(obj2).length &&
+    obj1Keys.every(key => obj2.hasOwnProperty(key) && obj1[key] === obj2[key])
+  );
+};
+
 ////////////////////////////////////////////////////////////////////////////////
-export { startsWith, pick, match, resolve, insertParams, validateRedirect };
+export {
+  startsWith,
+  pick,
+  match,
+  resolve,
+  insertParams,
+  validateRedirect,
+  shallowCompare
+};

@@ -1,6 +1,6 @@
 # Overview
 
-Here's a quick overview of the features and usage in Reach Router.
+Reach Router is a small, simple router for React that borrows from React Router, Ember, and Preact Router. Reach Router has a small footprint, supports only simple route patterns by design, and has strong (but experimental) accessibility features.
 
 ## Installation
 
@@ -80,6 +80,16 @@ const Invoice = props => (
     <h1>Invoice {props.invoiceId}</h1>
   </div>
 )
+
+// or with hooks
+const Invoice = () => {
+  const params = useParams()
+  return (
+    <div>
+      <h1>Invoice {params.invoiceId}</h1>
+    </div>
+  )
+}
 ```
 
 It's the same as rendering the component directly.
@@ -235,7 +245,7 @@ If you want to match the same path in two places in your app, just render two
 Routers. Again, a Router picks a single child to render based on the URL, and
 then ignores the rest.
 
-Just makes sure to mark the non-primary router(s) as `primary={false}` so that it doesn't manage the focus on those components.
+Just make sure to mark the non-primary router(s) as `primary={false}` so that it doesn't manage the focus on those components.
 
 ```jsx
 render(
@@ -265,7 +275,7 @@ render(
 
 ## Embedded Routers
 
-You can render a router anywhere you want in your app, even deep inside another Router, just makes sure to use a splat (`*`) on the parent component so nested paths match it.
+You can render a router anywhere you want in your app, even deep inside another Router, just make sure to use a splat (`*`) on the parent component so nested paths match it.
 
 ```jsx
 render(
@@ -290,23 +300,26 @@ This allows you to have all of your routes configured at the top of the app, or 
 
 ## Navigating Programmatically
 
-If you need to navigate programmatically (like after a form submits), import `navigate`.
+If you need to navigate programmatically (like after a form submits), import `useNavigate`.
 
 ```jsx
-import { navigate } from "@reach/router"
+import { useNavigate } from "@reach/router"
 
-const Invoices = () => (
-  <div>
-    <NewInvoiceForm
-      onSubmit={async event => {
-        const newInvoice = await createInvoice(
-          event.target
-        )
-        navigate(`/invoices/${newInvoice.id}`)
-      }}
-    />
-  </div>
-)
+const Invoices = () => {
+  const navigate = useNavigate()
+  return (
+    <div>
+      <NewInvoiceForm
+        onSubmit={async event => {
+          const newInvoice = await createInvoice(
+            event.target
+          )
+          navigate(`/invoices/${newInvoice.id}`)
+        }}
+      />
+    </div>
+  )
+}
 ```
 
 Or better, yet, use `props.navigate` passed to your route components and then you can navigate to relative paths:
@@ -334,6 +347,8 @@ const Invoices = ({ navigate }) => (
 Navigate returns a promise so you can await it. It resolves after React is completely finished rendering the next screen, even with React Suspense.
 
 ```jsx
+import { navigate } from "@reach/router"
+
 class Invoices extends React.Component {
   state = {
     creatingNewInvoice: false
